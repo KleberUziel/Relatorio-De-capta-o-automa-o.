@@ -2,7 +2,7 @@ function onFormSubmit(e) {
   const dados = e.namedValues;
   Logger.log(JSON.stringify(dados));
 
-  const codigoImovel = (dados["Nome do Prédio ou Residencial e unidade:"] && dados["Nome do Prédio ou Residencial e unidade:"][0]) || "SEM_IDENTIFICAÇÃO";
+  const codigoImovel = (dados["Nome do Prédio ou Residencial e unidade:"]?.[0]) || "SEM_IDENTIFICAÇÃO";
   const pastaRaiz = DriveApp.getFolderById("16EtaNrZN909h6dN2Sn0h5ER15JtBxe60");
 
   const pastaCodigo = pastaRaiz.createFolder(`${codigoImovel}`);
@@ -15,17 +15,19 @@ function onFormSubmit(e) {
   for (let campo in dados) {
     body.appendParagraph(`${campo}: ${dados[campo][0]}`);
   }
+
+  const hoje = new Date();
+  const proximoContato = new Date(hoje.getTime() + 15 * 24 * 60 * 60 * 1000);
+  body.appendParagraph(`📅 Primeiro lembrete agendado para: ${proximoContato.toLocaleDateString("pt-BR")}`);
+
   doc.saveAndClose();
 
   const fileDoc = DriveApp.getFileById(doc.getId());
   pastaCodigo.addFile(fileDoc);
   DriveApp.getRootFolder().removeFile(fileDoc);
 
-  let texto = "📋 Ficha de Captação (Resumo)\n\n";
-  for (let campo in dados) {
-    texto += `${campo}: ${dados[campo][0]}\n`;
-  }
-  const arquivoTxt = DriveApp.createFile(`Informações - ${codigoImovel}.txt`, texto, MimeType.PLAIN_TEXT);
+  const informacoesAdicionais = dados["Informações adicionais sobre o imóvel (ocupação, estado, pendências, etc):"]?.[0] || "Sem informações adicionais.";
+const arquivoTxt = DriveApp.createFile(`Informações - ${codigoImovel}.txt`, informacoesAdicionais, MimeType.PLAIN_TEXT);
   pastaCodigo.addFile(arquivoTxt);
   DriveApp.getRootFolder().removeFile(arquivoTxt);
 
@@ -33,32 +35,56 @@ function onFormSubmit(e) {
   const ultimaLinha = planilha.getLastRow();
   let titulos = planilha.getRange(1, 1, 1, planilha.getLastColumn()).getValues()[0];
 
-  // Garante que os títulos existam e captura os índices
   const colunasExtras = ["Link da Ficha", "Link das Fotos", "Link dos Documentos"];
   const colIndices = [];
 
   colunasExtras.forEach((titulo) => {
     let idx = titulos.indexOf(titulo);
     if (idx === -1) {
-      // Se não existir, cria no final
       const novaColuna = titulos.length + 1;
       planilha.getRange(1, novaColuna).setValue(titulo);
       titulos.push(titulo);
       colIndices.push(novaColuna);
     } else {
-      colIndices.push(idx + 1); // índice para usar com getRange (começa em 1)
+      colIndices.push(idx + 1);
     }
   });
 
-  // Insere os links nas colunas corretas da última linha
   planilha.getRange(ultimaLinha, colIndices[0]).setValue(fileDoc.getUrl());
   planilha.getRange(ultimaLinha, colIndices[1]).setValue(pastaFotos.getUrl());
   planilha.getRange(ultimaLinha, colIndices[2]).setValue(pastaDocs.getUrl());
 
-  // Move arquivos enviados no formulário
   const linha = planilha.getRange(ultimaLinha, 1, 1, planilha.getLastColumn()).getValues()[0];
-  moverArquivos(linha[50], pastaFotos); // Coluna AY
-  moverArquivos(linha[51], pastaDocs);  // Coluna AZ
+  moverArquivos(linha[50], pastaFotos);
+  moverArquivos(linha[51], pastaDocs);
+
+  // ✅ Criação de lembretes no Google Agenda
+  try {
+    const emailCorretor = dados["Endereço de e-mail"]?.[0];
+    const emailGestor = "gerencia.sunrisejp@gmail.com";
+
+    const nomeProprietario = dados["Nome completo do proprietário:"]?.[0] || "Proprietário";
+    const telefone = dados["Telefone (com DDD):"]?.[0] || "";
+    const endereco = dados["Endereço completo do imóvel:"]?.[0] || "";
+    const titulo = `📞 Falar com ${nomeProprietario}`;
+    const descricao = `Entrar em contato com o proprietário do imóvel ${codigoImovel}.\n\nTelefone: ${telefone}\nEndereço: ${endereco}`;
+
+    const calendario = CalendarApp.getDefaultCalendar();
+    const hoje = new Date();
+
+    for (let i = 0; i < 6; i++) {
+      const dataEvento = new Date(hoje);
+      dataEvento.setDate(hoje.getDate() + (15 * (i + 1)));
+
+      calendario.createEvent(titulo, dataEvento, dataEvento, {
+        description: descricao,
+        guests: `${emailCorretor},${emailGestor}`,
+        sendInvites: true
+      });
+    }
+  } catch (erroAgenda) {
+    Logger.log("Erro ao criar eventos no Google Agenda: " + erroAgenda);
+  }
 }
 
 function moverArquivos(urls, destino) {
@@ -77,12 +103,12 @@ function moverArquivos(urls, destino) {
   });
 }
 
-// Para testar manualmente (executar diretamente)
+// 🧪 Teste manual (roda a partir da planilha, útil para debug)
 function testeManual() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Respostas ao formulário 1");
-  const ultimaLinha = sheet.getLastRow();
-  const cabecalhos = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const valores = sheet.getRange(ultimaLinha, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const planilha = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Respostas ao formulário 1");
+  const ultimaLinha = planilha.getLastRow();
+  const cabecalhos = planilha.getRange(1, 1, 1, planilha.getLastColumn()).getValues()[0];
+  const valores = planilha.getRange(ultimaLinha, 1, 1, planilha.getLastColumn()).getValues()[0];
 
   let namedValues = {};
   cabecalhos.forEach((titulo, i) => {
